@@ -15,7 +15,8 @@
             isActive: false,     // "Working" vs "Stopped"
             autoSubmit: false,   // Try to click submit
             autoNext: false,     // Auto advance to next row after submit/reload
-            autoRedirect: false  // Auto click "Submit another response"
+            autoRedirect: false, // Auto click "Submit another response"
+            profile: "1"         // Default profile
         }
     };
 
@@ -27,18 +28,27 @@
     async function init() {
         await loadState();
 
+        // Load settings from storage (passed from popup)
+        const storedSettings = await chrome.storage.local.get(['autoFill', 'autoNext', 'autoSubmit', 'profile']);
+        if (storedSettings.autoFill !== undefined) state.settings.isActive = storedSettings.autoFill; // Map autoFill to isActive (Working/Stopped)
+        if (storedSettings.autoNext !== undefined) state.settings.autoNext = storedSettings.autoNext;
+        if (storedSettings.autoSubmit !== undefined) state.settings.autoSubmit = storedSettings.autoSubmit;
+        if (storedSettings.profile !== undefined) state.settings.profile = storedSettings.profile;
+
         // Check for auto-submit data from background script
         const autoData = await chrome.storage.local.get(['autoSubmitData']);
         console.log("Auto Submitter: Checking storage for autoSubmitData...", autoData);
 
-        if (autoData.autoSubmitData && autoData.autoSubmitData.data) {
-            const records = autoData.autoSubmitData.data;
+        if (autoData.autoSubmitData) {
+            const records = autoData.autoSubmitData.data || [];
             console.log("Auto Submitter: Found data records:", records);
+
+            // Always reset state if we received a new data object, even if empty
+            // This prevents "keeping old data" when the new fetch returns nothing (e.g. due to profile filter)
 
             if (Array.isArray(records) && records.length > 0) {
                 console.log("Auto Submitter: Importing data...");
                 // Convert to CSV format (Headers + Rows)
-                // We assume all records have same keys, or at least we take keys from first one
                 const headers = Object.keys(records[0]);
                 const rows = records.map(r => headers.map(h => r[h]));
 
@@ -48,13 +58,48 @@
                 state.rowStatuses = {};
                 rows.forEach((_, idx) => state.rowStatuses[idx] = { status: 'pending' });
 
-                state.step = 1; // Ensure we are in setup mode to verify mapping
+                state.step = 1; // Default to setup
 
-                // Clear the data so we don't reload it next time
-                await chrome.storage.local.remove('autoSubmitData');
+                // Try to auto-map immediately
+                // We need to wait for DOM to be ready, but init is called on load.
+                // Let's try to map and see if we can skip setup.
+                setTimeout(() => {
+                    scanAndMapFields();
+                    const autoMapped = checkAutoMapping();
+                    if (autoMapped) {
+                        console.log("Auto Submitter: Perfect mapping found, skipping setup.");
+                        state.step = 2;
+                        saveState();
+                        createPanel(); // Ensure panel is created
+                        renderContent();
+
+                        // Start processing if active
+                        if (state.settings.isActive) {
+                            processNext();
+                        }
+                    } else {
+                        saveState();
+                        createPanel();
+                    }
+                }, 500);
+            } else {
+                console.warn("Auto Submitter: Received empty data (possibly filtered out). Clearing old data.");
+                state.csvData = [];
+                state.headers = [];
+                state.rowStatuses = {};
+                state.step = 1;
+                // Optional: Clear mapping if we want a fresh start
+                // state.mapping = {}; 
+
+                createSimpleStatus("⚠️ No data found for this profile.");
                 await saveState();
-                console.log("Auto Submitter: Data imported and storage cleared.");
+                createPanel();
+                renderContent(); // Force re-render
             }
+
+            // Clear the data so we don't reload it next time
+            await chrome.storage.local.remove('autoSubmitData');
+            return;
         } else {
             console.log("Auto Submitter: No autoSubmitData found in storage.");
         }
@@ -70,23 +115,61 @@
             updateControls();
 
             if (state.settings.isActive) {
-                // Auto Fill Logic: Find first pending, else first filled
-                const nextIndex = findNextRowToFill();
-                if (nextIndex !== -1) {
-                    state.currentIndex = nextIndex;
-                    if (state.csvData.length > state.currentIndex) {
-                        // Slight delay to ensure form is ready
-                        setTimeout(() => {
-                            fillForm(state.currentIndex);
-
-                            if (state.settings.autoSubmit) {
-                                setTimeout(attemptSubmit, 200); // Faster submit
-                            }
-                        }, 100); // Faster initial fill
-                    }
-                }
+                processNext();
             }
         }
+    }
+
+    function processNext() {
+        // Auto Fill Logic: Find first pending, else first filled
+        const nextIndex = findNextRowToFill();
+        if (nextIndex !== -1) {
+            state.currentIndex = nextIndex;
+            if (state.csvData.length > state.currentIndex) {
+                // Slight delay to ensure form is ready
+                setTimeout(() => {
+                    fillForm(state.currentIndex);
+
+                    if (state.settings.autoSubmit) {
+                        setTimeout(attemptSubmit, 200); // Faster submit
+                    }
+                }, 100); // Faster initial fill
+            }
+        }
+    }
+
+    function checkAutoMapping() {
+        // Check if we can map all headers to fields automatically
+        // scanAndMapFields populates formFields and tries to find best matches
+        // We need to see if we have high confidence matches for all headers? 
+        // Or just if we have *some* matches?
+        // The prompt says "if all columns matching".
+
+        // Let's construct the mapping from the badges
+        const newMapping = {};
+        let matchCount = 0;
+
+        formFields.forEach(field => {
+            const select = field.badge.querySelector('select');
+            if (select && select.value) {
+                newMapping[field.id] = select.value;
+                matchCount++;
+            }
+        });
+
+        // If we mapped all headers (or at least most?), we can proceed.
+        // Let's be strict: if we mapped at least as many fields as headers?
+        // Or if every header is used?
+        const usedHeaders = Object.values(newMapping);
+        const allHeadersMapped = state.headers.every(h => usedHeaders.includes(h));
+
+        if (allHeadersMapped) {
+            state.mapping = newMapping;
+            // Cleanup badges
+            document.querySelectorAll('.ext-mapping-badge').forEach(el => el.remove());
+            return true;
+        }
+        return false;
     }
 
     function checkThankYouPage() {
@@ -120,6 +203,51 @@
         div.textContent = msg;
         document.body.appendChild(div);
     }
+
+    // Listen for storage changes in case data arrives after page load
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local') {
+            if (changes.autoSubmitData && changes.autoSubmitData.newValue) {
+                console.log("Auto Submitter: Detected new autoSubmitData in storage.");
+                init();
+            }
+
+            // Sync settings from Popup
+            let needsRender = false;
+            if (changes.profile) {
+                state.settings.profile = changes.profile.newValue;
+                needsRender = true;
+                // If profile changed, we might need to re-fetch data?
+                // The user said "only automation work with filtered data".
+                // If we change profile here, we should probably trigger a fetch if we are in "Working" mode?
+                // For now, just update UI. The user might need to click "Direct Form" or "Get Ready" again to re-fetch.
+                // OR we can trigger a message to background to re-fetch?
+                // Let's assume for now just UI sync.
+            }
+            if (changes.autoFill) {
+                state.settings.isActive = changes.autoFill.newValue;
+                const toggleBtn = document.getElementById('as-toggle-btn');
+                if (toggleBtn) {
+                    updateToggleBtnStyle(toggleBtn);
+                    toggleBtn.textContent = state.settings.isActive ? 'WORKING' : 'STOPPED';
+                }
+                if (state.settings.isActive) processNext();
+            }
+            if (changes.autoNext) {
+                state.settings.autoNext = changes.autoNext.newValue;
+                needsRender = true;
+            }
+            if (changes.autoSubmit) {
+                state.settings.autoSubmit = changes.autoSubmit.newValue;
+                needsRender = true;
+            }
+
+            if (needsRender) {
+                saveState();
+                renderContent();
+            }
+        }
+    });
 
     // --- UI Construction ---
     function createPanel() {
@@ -328,7 +456,13 @@
 
     function renderRunner(container) {
         container.innerHTML = `
-            <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <label style="font-size: 0.9rem; color: #94a3b8;">Profile:</label>
+                    <select id="as-profile-select" style="background: #1e293b; color: #f8fafc; border: 1px solid #475569; padding: 4px; border-radius: 4px; font-size: 0.85rem;">
+                        ${Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}" ${state.settings.profile == (i + 1) ? 'selected' : ''}>${i + 1}</option>`).join('')}
+                    </select>
+                </div>
                 <label style="display: flex; align-items: center; gap: 6px; font-size: 0.9rem; cursor: pointer;" title="Automatically click the Submit button after filling the form.">
                     <input type="checkbox" id="cb-auto-submit" ${state.settings.autoSubmit ? 'checked' : ''}> Auto Submit
                 </label>
@@ -337,19 +471,17 @@
                 </label>
             </div>
 
-            <div style="background: #1e293b; border-radius: 8px; overflow: hidden; border: 1px solid #334155; max-height: 400px; overflow-y: auto;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
-                    <thead style="background: #0f172a; position: sticky; top: 0;">
-                        <tr>
-                            <th style="padding: 8px; text-align: left; color: #94a3b8;">#</th>
-                            <th style="padding: 8px; text-align: left; color: #94a3b8;">Data</th>
-                            <th style="padding: 8px; text-align: left; color: #94a3b8;">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="as-data-table-body">
-                        <!-- Rows -->
-                    </tbody>
-                </table>
+            <div style="background: #1e293b; border-radius: 8px; overflow: hidden; border: 1px solid #334155; display: flex; flex-direction: column; max-height: 400px;">
+                <div style="overflow: auto; flex: 1;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; white-space: nowrap;">
+                        <thead id="as-data-table-head" style="background: #0f172a; position: sticky; top: 0; z-index: 10;">
+                            <!-- Headers generated dynamically -->
+                        </thead>
+                        <tbody id="as-data-table-body">
+                            <!-- Rows -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
             
             <div style="margin-top: 12px; display: flex; gap: 8px;">
@@ -358,13 +490,26 @@
             </div>
         `;
 
+        // Bind Profile Select
+        container.querySelector('#as-profile-select').addEventListener('change', (e) => {
+            state.settings.profile = e.target.value;
+            chrome.storage.local.set({ profile: e.target.value }); // Sync to storage
+            saveState();
+
+            // Background script now listens for 'profile' change in storage
+            // and re-filters the data automatically.
+            createSimpleStatus(`🔄 Filtering data for Profile ${state.settings.profile}...`);
+        });
+
         // Bind Checkboxes
         container.querySelector('#cb-auto-submit').addEventListener('change', (e) => {
             state.settings.autoSubmit = e.target.checked;
+            chrome.storage.local.set({ autoSubmit: e.target.checked }); // Sync to storage
             saveState();
         });
         container.querySelector('#cb-auto-next').addEventListener('change', (e) => {
             state.settings.autoNext = e.target.checked;
+            chrome.storage.local.set({ autoNext: e.target.checked }); // Sync to storage
             saveState();
         });
 
@@ -382,10 +527,73 @@
     }
 
     function renderTable() {
+        const thead = document.getElementById('as-data-table-head');
         const tbody = document.getElementById('as-data-table-body');
-        if (!tbody) return;
+        if (!tbody || !thead) return;
+
+        thead.innerHTML = '';
         tbody.innerHTML = '';
 
+        // --- Determine Column Order ---
+        // 1. # (Index) - Fixed
+        // 2. Status - Fixed
+        // 3. id (from data) - Priority
+        // 4. CUSTOMER NAME - Priority
+        // 5. Others...
+
+        const headers = state.headers || [];
+
+        // Find indices for priority columns (case-insensitive)
+        const idColIndex = headers.findIndex(h => h.toLowerCase() === 'id');
+        const custNameColIndex = headers.findIndex(h => h.toLowerCase() === 'customer name');
+
+        // Create list of column indices to show in order
+        const colIndices = [];
+
+        // Priority 1: ID
+        if (idColIndex !== -1) colIndices.push(idColIndex);
+
+        // Priority 2: Customer Name
+        if (custNameColIndex !== -1) colIndices.push(custNameColIndex);
+
+        // Others
+        headers.forEach((h, i) => {
+            if (i !== idColIndex && i !== custNameColIndex) {
+                colIndices.push(i);
+            }
+        });
+
+        // --- Render Header ---
+        const trHead = document.createElement('tr');
+
+        // Fixed Headers
+        ['#', 'Status'].forEach(text => {
+            const th = document.createElement('th');
+            th.style.padding = '8px';
+            th.style.textAlign = 'left';
+            th.style.color = '#94a3b8';
+            th.style.borderBottom = '1px solid #334155';
+            th.style.position = 'sticky';
+            th.style.left = text === '#' ? '0' : 'auto'; // Sticky first col? Maybe too complex for now.
+            th.style.background = '#0f172a'; // Opaque for sticky
+            th.textContent = text;
+            trHead.appendChild(th);
+        });
+
+        // Dynamic Headers
+        colIndices.forEach(idx => {
+            const th = document.createElement('th');
+            th.style.padding = '8px';
+            th.style.textAlign = 'left';
+            th.style.color = '#94a3b8';
+            th.style.borderBottom = '1px solid #334155';
+            th.style.background = '#0f172a';
+            th.textContent = headers[idx];
+            trHead.appendChild(th);
+        });
+        thead.appendChild(trHead);
+
+        // --- Render Body ---
         state.csvData.forEach((row, index) => {
             const tr = document.createElement('tr');
             const isCurrent = index === state.currentIndex;
@@ -395,49 +603,45 @@
             tr.style.cursor = 'pointer';
             if (isCurrent) {
                 tr.style.background = 'rgba(59, 130, 246, 0.2)'; // Blue tint
-                tr.style.borderLeft = '4px solid #3b82f6';
+                // tr.style.borderLeft = '4px solid #3b82f6'; // Border left messes up sticky/scroll sometimes, use box-shadow or outline
             } else {
                 tr.style.background = 'transparent';
             }
 
-            // Data Preview (First 2 cols)
-            const preview = row.slice(0, 2).join(', ');
-
-            // Index Cell
+            // 1. Index Cell
             const tdIndex = document.createElement('td');
             tdIndex.style.padding = '8px';
             tdIndex.textContent = index + 1;
+            if (isCurrent) tdIndex.style.borderLeft = '4px solid #3b82f6';
             tr.appendChild(tdIndex);
 
-            // Data Cell
-            const tdData = document.createElement('td');
-            tdData.style.padding = '8px';
-            tdData.style.whiteSpace = 'nowrap';
-            tdData.style.overflow = 'hidden';
-            tdData.style.textOverflow = 'ellipsis';
-            tdData.style.maxWidth = '150px';
-            tdData.textContent = preview;
-            tr.appendChild(tdData);
-
-            // Status Cell (Clickable)
+            // 2. Status Cell
             const tdStatus = document.createElement('td');
             tdStatus.style.padding = '8px';
-            tdStatus.style.cursor = 'pointer';
-            tdStatus.style.userSelect = 'none';
             tdStatus.innerHTML = getStatusBadge(status);
-            tdStatus.title = "Click to toggle status (Pending -> Filled -> Submitted)";
+            tdStatus.title = "Click to toggle status";
             tdStatus.addEventListener('click', (e) => {
-                e.stopPropagation(); // Prevent row selection
-                console.log(`Auto Submitter: Toggling status for row ${index + 1}`);
+                e.stopPropagation();
                 toggleRowStatus(index);
             });
             tr.appendChild(tdStatus);
 
-            // Row Click (Selection)
+            // 3. Dynamic Data Cells
+            colIndices.forEach(colIdx => {
+                const td = document.createElement('td');
+                td.style.padding = '8px';
+                td.style.maxWidth = '200px';
+                td.style.overflow = 'hidden';
+                td.style.textOverflow = 'ellipsis';
+                td.textContent = row[colIdx] || '';
+                tr.appendChild(td);
+            });
+
+            // Row Click
             tr.addEventListener('click', () => {
                 state.currentIndex = index;
                 saveState();
-                renderTable(); // Re-render to update selection
+                renderTable();
                 fillForm(index);
             });
 
@@ -765,11 +969,26 @@
             bestMatch = savedHeader;
         } else {
             // 2. Fallback to Fuzzy Match
+            let exactMatch = null;
+            let bestPartialMatch = null;
+            let bestPartialLength = 0;
+
             state.headers.forEach((header) => {
                 const h = header.toLowerCase().replace(/[^a-z0-9]/g, '');
                 const l = label.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (l.includes(h) || h.includes(l)) bestMatch = header;
+
+                if (h === l) {
+                    exactMatch = header;
+                } else if (l.includes(h) || h.includes(l)) {
+                    // Prioritize longer matches (e.g. "Cheque Date" > "Date")
+                    if (h.length > bestPartialLength) {
+                        bestPartialMatch = header;
+                        bestPartialLength = h.length;
+                    }
+                }
             });
+
+            bestMatch = exactMatch || bestPartialMatch;
         }
 
         state.headers.forEach((header) => {

@@ -1,45 +1,111 @@
 body {
-  font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', sans-serif;
-  background-color: #0f172a; /* Slate 900 */
-  color: #e2e8f0; /* Slate 200 */
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   width: 320px;
-  height: 160px;
+  background-color: #0f172a;
+  color: #f8fafc;
   margin: 0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
+  padding: 0;
 }
 
 .container {
-  text-align: center;
-  padding: 24px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  width: 85%;
-  transition: all 0.3s ease;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.container:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-2px);
+.title {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #38bdf8;
+  text-align: center;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1e293b;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+}
+
+.control-group label {
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+select {
+  flex: 1;
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #475569;
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #1e293b;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+}
+
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.button-group {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+button:hover {
+  opacity: 0.9;
+}
+
+.primary-btn {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+}
+
+.secondary-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.toggle-btn {
+  background: #ef4444;
+  color: white;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.toggle-btn.working {
+  background: #10b981;
 }
 
 .status-message {
-  font-size: 1.2rem;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  background: linear-gradient(135deg, #60a5fa 0%, #34d399 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  text-align: center;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-top: 4px;
 }
