@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
 
     // Bind params: s = string, i = integer
     $stmt->bind_param(
-        'sssssssssissi',
+        'sssssssssssss',
         $Email,
         $CUSTOMER_NAME,
         $task_pending,
