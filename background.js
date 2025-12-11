@@ -1,6 +1,6 @@
 const TARGET_URL_PART = "digiheadway.in/autosubmit/2.php";
 const API_URL = "https://digiheadway.in/autosubmit/2.php";
-const FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSelbKdum_B3X-O3AQqH-Lar8WRQppmf3GulMwxmLXxshZJayQ/viewform";
+const FORM_URL = "https://forms.gle/EzcfReSWR7VEpcRRA";
 
 let pollingInterval = null;
 
@@ -113,21 +113,27 @@ function filterAndSave(rawData, profileId, callback) {
     let filteredData = rawData;
 
     if (rawData.data && Array.isArray(rawData.data) && rawData.data.length > 0) {
-        // Find the profile key (case-insensitive)
-        const firstRow = rawData.data[0];
-        const profileKey = Object.keys(firstRow).find(k => k.toLowerCase() === 'profile');
-
-        if (profileKey) {
-            console.log(`Auto Submitter: Filtering by column '${profileKey}' for value '${profileId}'`);
-            const rows = rawData.data.filter(row => {
-                const val = row[profileKey];
-                return String(val).trim() === String(profileId).trim();
-            });
-
-            console.log(`Auto Submitter: Filtered down to ${rows.length} rows.`);
-            filteredData = { ...rawData, data: rows };
+        // If profileId is "0", we show ALL data (no filtering)
+        if (String(profileId) === "0") {
+            console.log("Auto Submitter: Profile is 0 (All). Skipping filtering.");
+            filteredData = rawData;
         } else {
-            console.warn("Auto Submitter: 'profile' column not found. Keeping all data.");
+            // Find the profile key (case-insensitive)
+            const firstRow = rawData.data[0];
+            const profileKey = Object.keys(firstRow).find(k => k.toLowerCase() === 'profile');
+
+            if (profileKey) {
+                console.log(`Auto Submitter: Filtering by column '${profileKey}' for value '${profileId}'`);
+                const rows = rawData.data.filter(row => {
+                    const val = row[profileKey];
+                    return String(val).trim() === String(profileId).trim();
+                });
+
+                console.log(`Auto Submitter: Filtered down to ${rows.length} rows.`);
+                filteredData = { ...rawData, data: rows };
+            } else {
+                console.warn("Auto Submitter: 'profile' column not found. Keeping all data.");
+            }
         }
     } else {
         console.warn("Auto Submitter: No data rows found.");

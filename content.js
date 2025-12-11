@@ -460,6 +460,7 @@
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <label style="font-size: 0.9rem; color: #94a3b8;">Profile:</label>
                     <select id="as-profile-select" style="background: #1e293b; color: #f8fafc; border: 1px solid #475569; padding: 4px; border-radius: 4px; font-size: 0.85rem;">
+                        <option value="0" ${state.settings.profile == 0 ? 'selected' : ''}>0 (All)</option>
                         ${Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}" ${state.settings.profile == (i + 1) ? 'selected' : ''}>${i + 1}</option>`).join('')}
                     </select>
                 </div>
